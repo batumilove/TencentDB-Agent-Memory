@@ -358,7 +358,7 @@ export function createL1Runner(opts: {
           config,
           options: {
             enableDedup: cfg.extraction.enableDedup,
-            maxMemoriesPerSession: cfg.extraction.maxMemoriesPerSession,
+            maxMemoriesPerSession: Math.max(cfg.extraction.maxMemoriesPerSession, group.messages.length),
             model: cfg.extraction.model,
             previousSceneName: lastSceneName ?? (runnerState.last_scene_name || undefined),
             vectorStore,

@@ -111,10 +111,10 @@ export async function extractL1Memories(params: {
 }): Promise<L1ExtractionResult> {
   const { messages, sessionKey, sessionId, baseDir, config, logger, instanceId: metricInstanceId } = params;
   const options = params.options ?? {};
-  const maxNewMessages = options.maxMessagesPerExtraction ?? 10;
+  const maxNewMessages = options.maxMessagesPerExtraction ?? Math.max(10, messages.length);
   const maxBgMessages = options.maxBackgroundMessages ?? 5;
   const enableDedup = options.enableDedup ?? true;
-  const maxMemoriesPerSession = options.maxMemoriesPerSession ?? 10;
+  const maxMemoriesPerSession = options.maxMemoriesPerSession ?? Math.max(10, messages.length * 2);
 
   if (messages.length === 0) {
     logger?.debug?.(`${TAG} No messages to extract from`);

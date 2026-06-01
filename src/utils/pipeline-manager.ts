@@ -649,6 +649,29 @@ export class MemoryPipelineManager {
       );
     }).finally(() => {
       timers.l1Queued = false;
+
+      // Messages can arrive while an L1 task is already queued/running. In that
+      // state notifyConversation() intentionally skips double-queueing and does
+      // not arm the idle timer. After the active L1 drains, re-check the buffer
+      // so rapid capture bursts do not leave later messages stranded until the
+      // next user turn or process shutdown.
+      if (!this.destroyed) {
+        const pendingBuffer = this.messageBuffers.get(sessionKey) ?? [];
+        const pendingState = this.sessionStates.get(sessionKey);
+        const effectiveThreshold = pendingState ? this.getEffectiveThreshold(pendingState) : 1;
+        if ((pendingState?.conversation_count ?? 0) >= effectiveThreshold) {
+          this.logger?.debug?.(
+            `${TAG} [${sessionKey}] L1 follow-up: conversation_count=${pendingState?.conversation_count ?? 0}/${effectiveThreshold}, ` +
+            `buffered=${pendingBuffer.length}; re-enqueuing`,
+          );
+          this.enqueueL1(sessionKey, "threshold");
+        } else if (pendingBuffer.length > 0) {
+          this.logger?.debug?.(
+            `${TAG} [${sessionKey}] L1 follow-up: ${pendingBuffer.length} buffered message(s) below threshold; arming idle timer`,
+          );
+          timers.l1Idle.schedule(this.l1IdleTimeoutMs, () => this.onL1IdleTimeout(sessionKey));
+        }
+      }
     });
   }
 
@@ -679,11 +702,12 @@ export class MemoryPipelineManager {
     this.logger?.debug?.(
       `${TAG} [${sessionKey}] L1 running: messages=${buffer.length}, conversation_count=${state.conversation_count}`,
     );
+    const processedConversationCount = state.conversation_count;
 
     if (!this.l1Runner) {
       this.logger?.warn(`${TAG} [${sessionKey}] No L1 runner set, skipping`);
-      state.l2_pending_l1_count = state.conversation_count;
-      state.conversation_count = 0;
+      state.l2_pending_l1_count += processedConversationCount;
+      state.conversation_count = Math.max(0, state.conversation_count - processedConversationCount);
       this.advanceWarmupThreshold(state);
       await this.persistStates();
       this.advanceL2Timer(sessionKey);
@@ -734,8 +758,8 @@ export class MemoryPipelineManager {
     // Success: reset retry count and advance state
     const timers = this.getOrCreateTimers(sessionKey);
     timers.l1RetryCount = 0;
-    state.l2_pending_l1_count = state.conversation_count;
-    state.conversation_count = 0;
+    state.l2_pending_l1_count += processedConversationCount;
+    state.conversation_count = Math.max(0, state.conversation_count - processedConversationCount);
     this.advanceWarmupThreshold(state);
     await this.persistStates();
 
