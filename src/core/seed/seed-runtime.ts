@@ -174,8 +174,15 @@ async function waitForL1Idle(
 
     const isIdle =
       queues.l1Idle &&
-      totalBuffered === 0 &&
-      totalConversationCount === 0;
+      totalBuffered === 0;
+
+    // Do not require conversation_count === 0 here. In seed mode, a tail batch
+    // can leave conversation_count below the everyN threshold while L0 has
+    // already been recorded and no L1 work is buffered/queued. Waiting for the
+    // live idle timer in that state can hang /seed for minutes even though L1 is
+    // actually drained. conversation_count is a trigger counter, not pending
+    // work by itself; buffered messages + queue idleness are the real drain
+    // signal.
 
     if (isIdle) {
       consecutiveIdle++;
