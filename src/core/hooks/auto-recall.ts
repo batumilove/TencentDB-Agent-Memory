@@ -601,7 +601,11 @@ async function searchHybrid(
   const RRF_K = 60;
 
   // Map: record_id → { rrfScore, formatable }
-  const mergedMap = new Map<string, { rrfScore: number; formatable: FormatableMemory }>();
+  // Keep source scores too: plain RRF can bury semantically good vector hits
+  // when every memory shares broad tokens like a project name. A tiny lexical
+  // intent boost after fusion helps specific matches (e.g. "backups go" →
+  // "backup target") without disabling hybrid retrieval.
+  const mergedMap = new Map<string, { rrfScore: number; formatable: FormatableMemory; sourceScore: number }>();
 
   // Process keyword results
   for (let rank = 0; rank < keywordResults.length; rank++) {
@@ -611,8 +615,9 @@ async function searchHybrid(
     const existing = mergedMap.get(id);
     if (existing) {
       existing.rrfScore += rrfScore;
+      existing.sourceScore = Math.max(existing.sourceScore, r.score);
     } else {
-      mergedMap.set(id, { rrfScore, formatable: recordToFormatable(r.record) });
+      mergedMap.set(id, { rrfScore, formatable: recordToFormatable(r.record), sourceScore: r.score });
     }
   }
 
@@ -624,14 +629,17 @@ async function searchHybrid(
     const existing = mergedMap.get(id);
     if (existing) {
       existing.rrfScore += rrfScore;
+      existing.sourceScore = Math.max(existing.sourceScore, r.score);
     } else {
-      mergedMap.set(id, { rrfScore, formatable: vectorResultToFormatable(r) });
+      mergedMap.set(id, { rrfScore, formatable: vectorResultToFormatable(r), sourceScore: r.score });
     }
   }
 
-  // Sort by combined RRF score and take top results
+  // Sort by hybrid score and take top results. Include a conservative lexical
+  // boost so specific query terms outrank generic same-project memories.
   const sorted = [...mergedMap.entries()]
-    .sort((a, b) => b[1].rrfScore - a[1].rrfScore)
+    .map(([id, item]) => ({ id, item, hybridScore: item.rrfScore + lexicalIntentBoost(userText, item.formatable.content) + denseScoreBoost(item.sourceScore) }))
+    .sort((a, b) => b.hybridScore - a.hybridScore)
     .slice(0, maxResults);
 
   if (sorted.length > 0) {
@@ -639,11 +647,73 @@ async function searchHybrid(
       `${TAG} Hybrid search found ${sorted.length} results ` +
       `(keyword=${keywordResults.length}, embedding=${embeddingResults.length})`,
     );
-    return { lines: sorted.map(([, { formatable }]) => formatMemoryLine(formatable)), timing };
+    return { lines: sorted.map(({ item }) => formatMemoryLine(item.formatable)), timing };
   }
 
   logger?.debug?.(`${TAG} Hybrid search: no results after merge`);
   return { lines: [], timing };
+}
+
+function denseScoreBoost(score: number): number {
+  // Vector scores are cosine-like similarities in [0,1] for sqlite-vec. Keep
+  // this intentionally small: RRF remains the primary signal, but dense rank
+  // quality can break ties among many same-project candidates.
+  if (!Number.isFinite(score) || score <= 0) return 0;
+  return Math.min(score, 1) * 0.02;
+}
+
+const QUERY_STOPWORDS = new Set([
+  "a", "an", "and", "are", "as", "at", "be", "does", "do", "for", "from",
+  "go", "goes", "is", "it", "of", "on", "or", "should", "the", "to", "use",
+  "what", "when", "where", "which", "who", "why", "with",
+]);
+
+const QUERY_SYNONYMS: Record<string, string[]> = {
+  backups: ["backup"],
+  backup: ["backups"],
+  go: ["target", "destination"],
+  goes: ["target", "destination"],
+  where: ["target", "destination"],
+};
+
+function lexicalIntentBoost(query: string, content: string): number {
+  const queryTerms = expandQueryTerms(tokenizeForRecallBoost(query));
+  const contentTerms = new Set(tokenizeForRecallBoost(content));
+  let hits = 0;
+  for (const term of queryTerms) {
+    if (contentTerms.has(term)) hits++;
+  }
+  if (hits === 0) return 0;
+  // One shared project token is common and weak; multiple/specific hits should
+  // noticeably outrank generic context but not overwhelm RRF completely.
+  return Math.min(hits, 5) * 0.015;
+}
+
+function expandQueryTerms(tokens: string[]): string[] {
+  const expanded = new Set<string>();
+  for (const token of tokens) {
+    expanded.add(token);
+    const synonyms = QUERY_SYNONYMS[token];
+    if (synonyms) {
+      for (const synonym of synonyms) expanded.add(synonym);
+    }
+  }
+  return [...expanded];
+}
+
+function tokenizeForRecallBoost(text: string): string[] {
+  const tokens = text
+    .toLowerCase()
+    .match(/[a-z0-9][a-z0-9_-]*/g) ?? [];
+  return tokens
+    .map((token) => normalizeRecallBoostToken(token))
+    .filter((token) => token.length >= 2 && !QUERY_STOPWORDS.has(token));
+}
+
+function normalizeRecallBoostToken(token: string): string {
+  if (token.length > 4 && token.endsWith("ies")) return `${token.slice(0, -3)}y`;
+  if (token.length > 3 && token.endsWith("s")) return token.slice(0, -1);
+  return token;
 }
 
 // ============================
