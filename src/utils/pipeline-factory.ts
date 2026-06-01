@@ -371,6 +371,10 @@ export function createL1Runner(opts: {
           instanceId: getInstanceId?.(),
         });
 
+        if (!l1Result.success) {
+          throw new Error(`L1 extraction failed for session ${sessionKey}, sessionId=${group.sessionId || "(empty)"}`);
+        }
+
         totalExtracted += l1Result.extractedCount;
         totalStored += l1Result.storedCount;
         if (l1Result.lastSceneName) {
