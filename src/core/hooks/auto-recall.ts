@@ -25,7 +25,7 @@ import type { Logger } from "../types.js";
 const TAG = "[memory-tdai] [recall]";
 const MEMORY_SEARCH_TOOL_NAME = process.env.MEMORY_TENCENTDB_TOOL_MEMORY_SEARCH_NAME ?? "memory_tencentdb_memory_search";
 const CONVERSATION_SEARCH_TOOL_NAME = process.env.MEMORY_TENCENTDB_TOOL_CONVERSATION_SEARCH_NAME ?? "memory_tencentdb_conversation_search";
-const RECALL_TRUNCATION_SUFFIX = `…（已截断；可用 ${MEMORY_SEARCH_TOOL_NAME} 或 ${CONVERSATION_SEARCH_TOOL_NAME} 查看详情）`;
+const RECALL_TRUNCATION_SUFFIX = `… (truncated; use ${MEMORY_SEARCH_TOOL_NAME} or ${CONVERSATION_SEARCH_TOOL_NAME} for details)`;
 const MIN_TRUNCATED_RECALL_LINE_CHARS = 40;
 const RECALL_LINE_SEPARATOR = "\n";
 
@@ -34,18 +34,18 @@ const RECALL_LINE_SEPARATOR = "\n";
  * main agent knows how to actively retrieve deeper information.
  */
 const MEMORY_TOOLS_GUIDE = `<memory-tools-guide>
-## 记忆工具调用指南
+## Memory tool guide
 
-当上方注入的记忆片段不足以回答用户问题时，可主动调用以下工具获取更多信息：
+When the injected memory snippets above are not enough to answer the user, use these tools to retrieve more context:
 
-- **${MEMORY_SEARCH_TOOL_NAME}**：搜索结构化记忆（L1），适用于回忆用户偏好、历史事件节点、规则等关键信息。
-- **${CONVERSATION_SEARCH_TOOL_NAME}**：搜索原始对话（L0），适用于查找具体消息原文、时间线、上下文细节；也可用于补充或校验 memory_search 的结果。
-- **read_file**（Scene Navigation 中的路径）：当已定位到相关情境，且需要该场景的完整画像、事件经过或阶段结论时使用。
+- **${MEMORY_SEARCH_TOOL_NAME}**: search structured memories (L1). Use for user preferences, durable rules, important historical facts, and high-signal events.
+- **${CONVERSATION_SEARCH_TOOL_NAME}**: search raw conversations (L0). Use for exact wording, timelines, original messages, and to verify or supplement memory_search results.
+- **read_file** with paths from Scene Navigation: use when you have identified a relevant scene and need the full scene narrative, event flow, or conclusions.
 
-### ⚠️ 调用次数限制
-每轮对话中，${MEMORY_SEARCH_TOOL_NAME} 和 ${CONVERSATION_SEARCH_TOOL_NAME} **合计最多调用 3 次**。
-- 首次搜索无结果时，可换关键词或换工具重试，但总调用次数不要超过 3 次。
-- 若 3 次搜索后仍无结果，说明该信息不在记忆中，请直接根据已有信息回复用户，不要继续搜索。
+### Call limit
+Use ${MEMORY_SEARCH_TOOL_NAME} and ${CONVERSATION_SEARCH_TOOL_NAME} at most **3 total times per turn**.
+- If the first search misses, retry once or twice with better keywords or the other tool, staying within the 3-call limit.
+- If 3 searches still miss, assume the information is not in memory and answer from available context instead of continuing to search.
 </memory-tools-guide>`
 
 /** A single recalled L1 memory with its search score and type. */
@@ -206,7 +206,7 @@ async function performAutoRecallInner(params: {
   let prependContext: string | undefined;
   if (memoryLines.length > 0) {
     prependContext =
-      `<relevant-memories>\n以下是当前对话召回的相关记忆，不代表当前任务进程，仅作为参考：\n\n${memoryLines.join(RECALL_LINE_SEPARATOR)}\n</relevant-memories>`;
+      `<relevant-memories>\nRelevant recalled memories for this turn. These are reference context, not proof of current task progress:\n\n${memoryLines.join(RECALL_LINE_SEPARATOR)}\n</relevant-memories>`;
   }
 
   // Append memory tools usage guide to the stable part so the agent knows
