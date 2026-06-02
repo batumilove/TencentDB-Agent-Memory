@@ -317,6 +317,10 @@ async function callLlmExtraction(params: {
   );
 
   let result: string;
+  const extractionTimeoutMs =
+    typeof (config as { llm?: { timeoutMs?: unknown } })?.llm?.timeoutMs === "number"
+      ? (config as { llm: { timeoutMs: number } }).llm.timeoutMs
+      : 180_000;
 
   if (llmRunner) {
     // Use the host-neutral LLMRunner interface
@@ -324,7 +328,7 @@ async function callLlmExtraction(params: {
       prompt: userPrompt,
       systemPrompt: EXTRACT_MEMORIES_SYSTEM_PROMPT,
       taskId: "l1-extraction",
-      timeoutMs: 180_000,
+      timeoutMs: extractionTimeoutMs,
     });
   } else {
     // Fallback: create CleanContextRunner (OpenClaw path)
@@ -339,7 +343,7 @@ async function callLlmExtraction(params: {
       prompt: userPrompt,
       systemPrompt: EXTRACT_MEMORIES_SYSTEM_PROMPT,
       taskId: "l1-extraction",
-      timeoutMs: 180_000,
+      timeoutMs: extractionTimeoutMs,
     });
   }
 
@@ -367,7 +371,7 @@ function parseExtractionResult(raw: string, logger?: Logger): SceneSegment[] {
       logger?.warn?.(
         `${TAG} [l1-debug] NO_JSON taskId=l1-extraction, rawLen=${raw.length}, cleanedLen=${cleaned.length}, rawFull=${JSON.stringify(rawPreview)}${raw.length > 2048 ? `…(+${raw.length - 2048})` : ""}`,
       );
-      return [];
+      throw new Error("No JSON array found in extraction response");
     }
 
     // Sanitize control characters inside JSON string literals that LLM may produce
